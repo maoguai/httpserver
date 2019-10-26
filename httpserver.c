@@ -11,6 +11,8 @@
 #include <netinet/in.h>
 #include <errno.h>
 
+/*-------------------------全局变量-------------------------*/
+#define PORT 6666
 
 /*--------------------------主函数--------------------------*/
 /*-------------------socket套接字创建TCP连接-----------------*/
@@ -52,6 +54,5 @@ int main(int argc,char* argv[])
         exit(1);
     }
     printf("Listening....\n");
-    select_loop(sockfd);
     return 0;
 }
