@@ -53,40 +53,52 @@ int header_parse(char *buff, int len)
 	{
 		switch (status) {
         case READ_HEADER:
-            if (*check == '\r') {
+            if (*parse_buff == '\r') {
                 status = ONE_CR;
-            } else if (*check == '\n') {
+            } else if (*parse_buff == '\n') {
                 status = ONE_LF;
             }
             break;
 
         case ONE_CR:
-            if (*check == '\n')
+            if (*parse_buff == '\n')
                  status = ONE_LF;
-            else if (*check != '\r')
+            else if (*parse_buff != '\r')
                  status = READ_HEADER;
             break;
 
         case ONE_LF:
-            /* if here, we've found the end (for sure) of a header */
-            if (*check == '\r') /* could be end o headers */
+            if (*parse_buff == '\r') 
                 status = TWO_CR;
-            else if (*check == '\n')
+            else if (*parse_buff == '\n')
                 status = BODY_READ;
             else
                 status = READ_HEADER;
             break;
 
         case TWO_CR:
-            if (*check == '\n')
+            if (*parse_buff == '\n')
                 status = BODY_READ;
-            else if (*check != '\r')
+            else if (*parse_buff != '\r')
                 status = READ_HEADER;
             break;
 
         default:
             break;
         }
+
+        parse_buff++;                       /*更新等待解析http*/
+        parse_num++;                        /*更新解析http字数*/
+
+        if(status == ONE_LF)             /*请求方法或者请求头部*/
+        {
+              
+        }
+        else if(status == BODY_READ)				  /*正文*/
+        {
+
+        }
+
 	}
 }
 /*----------------------处理客户端请求------------------------*/
