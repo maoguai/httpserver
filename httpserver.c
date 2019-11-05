@@ -24,10 +24,71 @@ int max_fd;
 #define BOA_FD_SET(fd, where) { FD_SET(fd, where); \
     if (fd > max_fd) max_fd = fd; \
     }
+/*------------------------ http头状态机状态------------------*/
+#define READ_HEADER             0                 /*读取状态*/
+#define ONE_CR                  1                  /*/r状态*/
+#define ONE_LF                  2           /*/r/n即解析状态*/
+#define TWO_CR                  3     /*/r/n/r即即将空行状态*/
+#define BODY_READ               4             /*请求正文状态*/
+#define BODY_WRITE              5
+#define WRITE                   6
+#define PIPE_READ               7
+#define PIPE_WRITE              8
+#define DONE                    9
+#define DEAD                   10
 /*-------------------------函数申明--------------------------*/
 void select_loop(int server_s);               /*处理客户端请求*/
-int process_requests(int server_s);           /*报文解析*/
+int process_requests(int server_s);                /*报文解析*/
 
+int header_parse(char *buff, int len);           /*解析http头*/
+
+
+/*------------------------解析http头-------------------------*/
+int header_parse(char *buff, int len)
+{
+	char *parse_buff = buff;              /*等待解析的http文件*/
+	int status = READ_HEADER;          /*设置启始状态为读取状态*/
+	int parse_num = 0;                      /*解析过的字符串数*/
+	while(parse_buff < (buff + len))
+	{
+		switch (status) {
+        case READ_HEADER:
+            if (*check == '\r') {
+                status = ONE_CR;
+            } else if (*check == '\n') {
+                status = ONE_LF;
+            }
+            break;
+
+        case ONE_CR:
+            if (*check == '\n')
+                 status = ONE_LF;
+            else if (*check != '\r')
+                 status = READ_HEADER;
+            break;
+
+        case ONE_LF:
+            /* if here, we've found the end (for sure) of a header */
+            if (*check == '\r') /* could be end o headers */
+                status = TWO_CR;
+            else if (*check == '\n')
+                status = BODY_READ;
+            else
+                status = READ_HEADER;
+            break;
+
+        case TWO_CR:
+            if (*check == '\n')
+                status = BODY_READ;
+            else if (*check != '\r')
+                status = READ_HEADER;
+            break;
+
+        default:
+            break;
+        }
+	}
+}
 /*----------------------处理客户端请求------------------------*/
 
 void select_loop(int server_s)
@@ -39,11 +100,12 @@ void select_loop(int server_s)
         //没有可读的文件描述符，就阻塞。
         if (select(max_fd + 1, &block_read_fdset,NULL, NULL,NULL) == -1) {
             if (errno == EINTR)
-                continue;   /* while(1) */
+                continue;                     /* while(1) */
             else if (errno != EBADF) {
                 perror("select");
             }
         }
+        /*判断set集合中描述符fd是否准备好*/
         if (FD_ISSET(server_s, &block_read_fdset))
             process_requests(server_s);
     }
@@ -53,13 +115,12 @@ void select_loop(int server_s)
 
 int process_requests(int server_s)
 {
-    int fd;                     /* socket */
-    struct SOCKADDR remote_addr; /* address */
+    int fd;                                  /* socket */
+    struct SOCKADDR remote_addr;             /* address */
     int remote_addrlen = sizeof (struct SOCKADDR);
     size_t len;
     char buff[BUFFER_SIZE];
     bzero(buff,BUFFER_SIZE);
-    //remote_addr.S_FAMILY = 0xdead;
     fd = accept(server_s, (struct sockaddr *) &remote_addr,
                 &remote_addrlen);
 
@@ -80,6 +141,7 @@ int process_requests(int server_s)
     printf("recv from client:%s\n",buff);
     return 0;
 }
+
 /*--------------------------主函数--------------------------*/
 /*-------------------socket套接字创建TCP连接-----------------*/
 int main(int argc,char* argv[])
@@ -123,3 +185,6 @@ int main(int argc,char* argv[])
     select_loop(sockfd);
     return 0;
 }
+
+
+
