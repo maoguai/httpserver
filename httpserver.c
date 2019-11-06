@@ -19,6 +19,7 @@
 #define SOCKADDR sockaddr_in
 #define S_FAMILY sin_family
 #define SERVER_AF AF_INET
+int PARSE_HEAD_OPTION = 0;//解析http头选项的标志位，为1表示可以解析了
 fd_set block_read_fdset;
 int max_fd;
 #define BOA_FD_SET(fd, where) { FD_SET(fd, where); \
@@ -36,11 +37,21 @@ int max_fd;
 #define PIPE_WRITE              8
 #define DONE                    9
 #define DEAD                   10
+/*------------------------ http请求头---------------------*/
+#define M_GET       1
+#define M_HEAD      2
+#define M_PUT       3
+#define M_POST      4
+#define M_DELETE    5
+#define M_LINK      6
+#define M_UNLINK    7
+
 /*-------------------------函数申明--------------------------*/
 void select_loop(int server_s);               /*处理客户端请求*/
 int process_requests(int server_s);                /*报文解析*/
 
 int header_parse(char *buff, int len);           /*解析http头*/
+int http_head_parse(char *buff)              /*解析http请求行*/
 
 
 /*------------------------解析http头-------------------------*/
@@ -100,6 +111,79 @@ int header_parse(char *buff, int len)
         }
 
 	}
+}
+
+/*----------------------解析http请求行----————---------------*/
+int http_head_parse(char *buff)
+{
+    int method;                   /*请求http方法，GET or POST*/
+    char *uri;
+    char version;
+
+    char *parse_buff = buff;
+    char *parse_buff_stop;
+    int head_long = 0;
+    /*判断请求方法*/
+    if(!memcmp(parse_buff,"GET",3))
+    {
+        method = M_GET;
+        head_long = 3;
+        printf("GET\n");
+    }
+    else if(!memcmp(parse_buff,"POST",4))
+    {
+        method = M_POST;
+        head_long = 4;
+        printf("POST\n");
+    }
+    else
+    {
+        perror("malformed request\n");
+        return -1;
+    }
+    PARSE_HEAD_OPTION = 1;
+    /*parse_buff移动到uri起始处;parse_buff_stop移动到uri结尾处*/
+    parse_buff = parse_buff + head_long;
+    while(*(++parse_buff) == ' ')
+    parse_buff_stop = parse_buff;    
+    while(*parse_buff_stop != '\0' && *parse_buff_stop != ' ')
+    {
+        ++parse_buff_stop;
+    }
+
+    memcpy(uri,parse_buff,parse_buff_stop - parse_buff);
+    printf("%s\n",uri);
+
+    /*解析http版本*/
+    if(*parse_buff_stop == ' ')
+    {
+        /*移动到http版本头部*/
+        ++parse_buff_stop;
+        while(*parse_buff_stop == '\0' && *parse_buff_stop == ' ')
+        {
+            ++parse_buff_stop;
+        }
+        int p1,p2;
+        if (sscanf(parse_buff_stop, "HTTP/%u.%u", &p1, &p2) == 2) 
+        {
+            if (p1 == 1 && (p2 == 0 || p2 == 1)) 
+            {
+                version = parse_buff_stop;
+                printf("%s\n",version);
+            } else if (p1 > 1 || (p1 != 0 && p2 > 1)) 
+            {
+                perror("bad HTTP version");
+                return -1;
+            }
+        }
+        else
+        {
+            perror("bad HTTP version");
+            return -1;
+        }
+
+    }
+
 }
 /*----------------------处理客户端请求------------------------*/
 
