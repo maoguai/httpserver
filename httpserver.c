@@ -10,7 +10,7 @@
 #include <unistd.h>
 #include <netinet/in.h>
 #include <errno.h>
-
+//
 /*-------------------------全局变量--------------------------*/
 #define PORT 6666
 #define BUFFER_SIZE 4096
