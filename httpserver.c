@@ -52,8 +52,8 @@ int process_requests(int server_s);                /*报文解析*/
 
 int header_parse(char *buff, int len);           /*解析http头*/
 int http_head_parse(char *buff)              /*解析http请求行*/
-
-
+int http_option_parse(char *buff)          /*解析http请求头部*/
+char *to_upper(char *str)                        /*字符串大写*/
 /*------------------------解析http头-------------------------*/
 int header_parse(char *buff, int len)
 {
@@ -183,8 +183,71 @@ int http_head_parse(char *buff)
         }
 
     }
-
 }
+/*------------------格式化字符串为大写字母---------------------*/
+char *to_upper(char *str)
+{
+    char *buff = str;
+    while (*str) {
+        if (*str == '-')
+            *str = '-';
+        else
+            *str = toupper(*str);
+        str++;
+    }
+    return buff;
+}
+/*----------------------解析http请求头部----———---------------*/
+int http_option_parse(char *buff) 
+{
+    char *if_modified_since;    /* If-Modified-Since */
+    char *content_type;
+    char *content_length;
+    char *connection;
+    char *referer;
+    char *user_agent;
+    /*分离key值和value值*/
+    char *parse_buff = buff;
+    char *key,*value;
+    value = strchr(parse_buff,':');
+    memcpy(key, parse_buff, strlen(parse_buff)-strlen(value));
+    if (value == NULL)
+        return 0;
+    to_upper(key);
+    /*匹配key和value值*/
+    if (!memcmp(key, "IF_MODIFIED_SINCE", 17))
+    {
+        if_modified_since = value+1;
+        printf("%s:%s\n",key,if_modified_since);
+    }
+    else if (!memcmp(key, "CONTENT_TYPE", 12))
+    {
+        content_type = value+1;
+        printf("%s:%s\n",key,content_type);
+    }
+    else if (!memcmp(key, "CONTENT_LENGTH", 14))
+    {
+        content_length = value+1;
+        printf("%s:%s\n",key,content_length);
+    }
+    else if (!memcmp(key, "CONNECTION", 10)) 
+    {         
+        connection = value+1;
+        printf("%s:%s\n",key,connection);
+    }
+    else if (!memcmp(key, "REFERER", 7))
+    {
+        referer = value+1;
+        printf("%s:%s\n",key,referer);
+    } 
+    else if (!memcmp(key, "USER_AGENT", 10))
+    {
+        user_agent = value+1;
+        printf("%s:%s\n",key,user_agent);
+    }
+    return 0;
+}
+
 /*----------------------处理客户端请求------------------------*/
 
 void select_loop(int server_s)
