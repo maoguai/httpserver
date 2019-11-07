@@ -1,5 +1,9 @@
 //httpserver.c
+<<<<<<< HEAD
 //
+=======
+
+>>>>>>> 24aff06adf19938b0c270efa559451238b13aab8
 /*--------------------------头文件--------------------------*/
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -19,7 +23,10 @@
 #define SOCKADDR sockaddr_in
 #define S_FAMILY sin_family
 #define SERVER_AF AF_INET
+<<<<<<< HEAD
 #define MAX_HEADER_LENGTH           1024
+=======
+>>>>>>> 24aff06adf19938b0c270efa559451238b13aab8
 int PARSE_HEAD_OPTION = 0;//解析http头选项的标志位，为1表示可以解析了
 fd_set block_read_fdset;
 int max_fd;
@@ -52,6 +59,7 @@ void select_loop(int server_s);               /*处理客户端请求*/
 int process_requests(int server_s);                /*报文解析*/
 
 int header_parse(char *buff, int len);           /*解析http头*/
+<<<<<<< HEAD
 int http_head_parse(char *buff);             /*解析http请求行*/
 int http_option_parse(char *buff);         /*解析http请求头部*/
 char *to_upper(char *str);                       /*字符串大写*/
@@ -73,30 +81,67 @@ int header_parse(char *buff, int len)
             } else if (*check == '\n') {
                 status = ONE_LF;
                 line_end = check;
+=======
+int http_head_parse(char *buff)              /*解析http请求行*/
+int http_option_parse(char *buff)          /*解析http请求头部*/
+char *to_upper(char *str)                        /*字符串大写*/
+/*------------------------解析http头-------------------------*/
+int header_parse(char *buff, int len)
+{
+	char *parse_buff = buff;              /*等待解析的http文件*/
+	int status = READ_HEADER;          /*设置启始状态为读取状态*/
+	int parse_num = 0;                      /*解析过的字符串数*/
+	while(parse_buff < (buff + len))
+	{
+		switch (status) {
+        case READ_HEADER:
+            if (*parse_buff == '\r') {
+                status = ONE_CR;
+            } else if (*parse_buff == '\n') {
+                status = ONE_LF;
+>>>>>>> 24aff06adf19938b0c270efa559451238b13aab8
             }
             break;
 
         case ONE_CR:
+<<<<<<< HEAD
             if (*check == '\n')
                  status = ONE_LF;
             else if (*check != '\r')
+=======
+            if (*parse_buff == '\n')
+                 status = ONE_LF;
+            else if (*parse_buff != '\r')
+>>>>>>> 24aff06adf19938b0c270efa559451238b13aab8
                  status = READ_HEADER;
             break;
 
         case ONE_LF:
+<<<<<<< HEAD
             /* if here, we've found the end (for sure) of a header */
             if (*check == '\r') /* could be end o headers */
                 status = TWO_CR;
             else if (*check == '\n')
+=======
+            if (*parse_buff == '\r') 
+                status = TWO_CR;
+            else if (*parse_buff == '\n')
+>>>>>>> 24aff06adf19938b0c270efa559451238b13aab8
                 status = BODY_READ;
             else
                 status = READ_HEADER;
             break;
 
         case TWO_CR:
+<<<<<<< HEAD
             if (*check == '\n')
                 status = BODY_READ;
             else if (*check != '\r')
+=======
+            if (*parse_buff == '\n')
+                status = BODY_READ;
+            else if (*parse_buff != '\r')
+>>>>>>> 24aff06adf19938b0c270efa559451238b13aab8
                 status = READ_HEADER;
             break;
 
@@ -104,6 +149,7 @@ int header_parse(char *buff, int len)
             break;
         }
 
+<<<<<<< HEAD
         parse_pos++;       /* update parse position */
         check++;
         //解析到每一行末后进入
@@ -132,11 +178,27 @@ int header_parse(char *buff, int len)
         }
     } 
     return 0;
+=======
+        parse_buff++;                       /*更新等待解析http*/
+        parse_num++;                        /*更新解析http字数*/
+
+        if(status == ONE_LF)             /*请求方法或者请求头部*/
+        {
+              
+        }
+        else if(status == BODY_READ)				  /*正文*/
+        {
+
+        }
+
+	}
+>>>>>>> 24aff06adf19938b0c270efa559451238b13aab8
 }
 
 /*----------------------解析http请求行----————---------------*/
 int http_head_parse(char *buff)
 {
+<<<<<<< HEAD
     static char *SIMPLE_HTTP_VERSION = "HTTP/0.9";
     int method;//用于获取http请求行的方法，GET或HEAD或POST
     char request_uri[MAX_HEADER_LENGTH + 1]; // 用于获取客户端请求的uri
@@ -231,6 +293,75 @@ int http_head_parse(char *buff)
     //send_r_bad_request(req);
     perror("bogus HTTP version");
     return -1;
+=======
+    int method;                   /*请求http方法，GET or POST*/
+    char *uri;
+    char version;
+
+    char *parse_buff = buff;
+    char *parse_buff_stop;
+    int head_long = 0;
+    /*判断请求方法*/
+    if(!memcmp(parse_buff,"GET",3))
+    {
+        method = M_GET;
+        head_long = 3;
+        printf("GET\n");
+    }
+    else if(!memcmp(parse_buff,"POST",4))
+    {
+        method = M_POST;
+        head_long = 4;
+        printf("POST\n");
+    }
+    else
+    {
+        perror("malformed request\n");
+        return -1;
+    }
+    PARSE_HEAD_OPTION = 1;
+    /*parse_buff移动到uri起始处;parse_buff_stop移动到uri结尾处*/
+    parse_buff = parse_buff + head_long;
+    while(*(++parse_buff) == ' ')
+    parse_buff_stop = parse_buff;    
+    while(*parse_buff_stop != '\0' && *parse_buff_stop != ' ')
+    {
+        ++parse_buff_stop;
+    }
+
+    memcpy(uri,parse_buff,parse_buff_stop - parse_buff);
+    printf("%s\n",uri);
+
+    /*解析http版本*/
+    if(*parse_buff_stop == ' ')
+    {
+        /*移动到http版本头部*/
+        ++parse_buff_stop;
+        while(*parse_buff_stop == '\0' && *parse_buff_stop == ' ')
+        {
+            ++parse_buff_stop;
+        }
+        int p1,p2;
+        if (sscanf(parse_buff_stop, "HTTP/%u.%u", &p1, &p2) == 2) 
+        {
+            if (p1 == 1 && (p2 == 0 || p2 == 1)) 
+            {
+                version = parse_buff_stop;
+                printf("%s\n",version);
+            } else if (p1 > 1 || (p1 != 0 && p2 > 1)) 
+            {
+                perror("bad HTTP version");
+                return -1;
+            }
+        }
+        else
+        {
+            perror("bad HTTP version");
+            return -1;
+        }
+
+    }
+>>>>>>> 24aff06adf19938b0c270efa559451238b13aab8
 }
 /*------------------格式化字符串为大写字母---------------------*/
 char *to_upper(char *str)
@@ -238,7 +369,11 @@ char *to_upper(char *str)
     char *buff = str;
     while (*str) {
         if (*str == '-')
+<<<<<<< HEAD
             *str = '_';
+=======
+            *str = '-';
+>>>>>>> 24aff06adf19938b0c270efa559451238b13aab8
         else
             *str = toupper(*str);
         str++;
@@ -251,6 +386,7 @@ int http_option_parse(char *buff)
     char *if_modified_since;    /* If-Modified-Since */
     char *content_type;
     char *content_length;
+<<<<<<< HEAD
     char *keepalive;
     char *header_referer;
     char *header_user_agent;
@@ -288,6 +424,49 @@ int http_option_parse(char *buff)
     else if (!memcmp(line, "USER_AGENT", 10)) {
         header_user_agent = value;
         printf("USER_AGENT:%s\n",header_user_agent);
+=======
+    char *connection;
+    char *referer;
+    char *user_agent;
+    /*分离key值和value值*/
+    char *parse_buff = buff;
+    char *key,*value;
+    value = strchr(parse_buff,':');
+    memcpy(key, parse_buff, strlen(parse_buff)-strlen(value));
+    if (value == NULL)
+        return 0;
+    to_upper(key);
+    /*匹配key和value值*/
+    if (!memcmp(key, "IF_MODIFIED_SINCE", 17))
+    {
+        if_modified_since = value+1;
+        printf("%s:%s\n",key,if_modified_since);
+    }
+    else if (!memcmp(key, "CONTENT_TYPE", 12))
+    {
+        content_type = value+1;
+        printf("%s:%s\n",key,content_type);
+    }
+    else if (!memcmp(key, "CONTENT_LENGTH", 14))
+    {
+        content_length = value+1;
+        printf("%s:%s\n",key,content_length);
+    }
+    else if (!memcmp(key, "CONNECTION", 10)) 
+    {         
+        connection = value+1;
+        printf("%s:%s\n",key,connection);
+    }
+    else if (!memcmp(key, "REFERER", 7))
+    {
+        referer = value+1;
+        printf("%s:%s\n",key,referer);
+    } 
+    else if (!memcmp(key, "USER_AGENT", 10))
+    {
+        user_agent = value+1;
+        printf("%s:%s\n",key,user_agent);
+>>>>>>> 24aff06adf19938b0c270efa559451238b13aab8
     }
     return 0;
 }
@@ -341,8 +520,12 @@ int process_requests(int server_s)
         else
             return -1;
     }
+<<<<<<< HEAD
     printf("recv %d bytes from client:%s\n",bytes,buff);
     header_parse(buff,bytes);
+=======
+    printf("recv from client:%s\n",buff);
+>>>>>>> 24aff06adf19938b0c270efa559451238b13aab8
     return 0;
 }
 
