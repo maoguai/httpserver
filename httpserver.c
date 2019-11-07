@@ -1,5 +1,5 @@
 //httpserver.c
-
+//
 /*--------------------------头文件--------------------------*/
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -19,6 +19,7 @@
 #define SOCKADDR sockaddr_in
 #define S_FAMILY sin_family
 #define SERVER_AF AF_INET
+#define MAX_HEADER_LENGTH           1024
 int PARSE_HEAD_OPTION = 0;//解析http头选项的标志位，为1表示可以解析了
 fd_set block_read_fdset;
 int max_fd;
@@ -51,46 +52,51 @@ void select_loop(int server_s);               /*处理客户端请求*/
 int process_requests(int server_s);                /*报文解析*/
 
 int header_parse(char *buff, int len);           /*解析http头*/
-int http_head_parse(char *buff)              /*解析http请求行*/
-int http_option_parse(char *buff)          /*解析http请求头部*/
-char *to_upper(char *str)                        /*字符串大写*/
+int http_head_parse(char *buff);             /*解析http请求行*/
+int http_option_parse(char *buff);         /*解析http请求头部*/
+char *to_upper(char *str);                       /*字符串大写*/
 /*------------------------解析http头-------------------------*/
+
 int header_parse(char *buff, int len)
 {
-	char *parse_buff = buff;              /*等待解析的http文件*/
-	int status = READ_HEADER;          /*设置启始状态为读取状态*/
-	int parse_num = 0;                      /*解析过的字符串数*/
-	while(parse_buff < (buff + len))
-	{
-		switch (status) {
+	char *check = buff;
+    int status = READ_HEADER;
+    char *line_end;//用于标记，改成指针
+    char *header_line;//记录http头选项每一行开始的位置
+    int parse_pos = 0;
+    while (check < (buff + len)) {
+        switch (status) {
         case READ_HEADER:
-            if (*parse_buff == '\r') {
+            if (*check == '\r') {
                 status = ONE_CR;
-            } else if (*parse_buff == '\n') {
+                line_end = check;
+            } else if (*check == '\n') {
                 status = ONE_LF;
+                line_end = check;
             }
             break;
 
         case ONE_CR:
-            if (*parse_buff == '\n')
+            if (*check == '\n')
                  status = ONE_LF;
-            else if (*parse_buff != '\r')
+            else if (*check != '\r')
                  status = READ_HEADER;
             break;
 
         case ONE_LF:
-            if (*parse_buff == '\r') 
+            /* if here, we've found the end (for sure) of a header */
+            if (*check == '\r') /* could be end o headers */
                 status = TWO_CR;
-            else if (*parse_buff == '\n')
+            else if (*check == '\n')
                 status = BODY_READ;
             else
                 status = READ_HEADER;
             break;
 
         case TWO_CR:
-            if (*parse_buff == '\n')
+            if (*check == '\n')
                 status = BODY_READ;
-            else if (*parse_buff != '\r')
+            else if (*check != '\r')
                 status = READ_HEADER;
             break;
 
@@ -98,91 +104,133 @@ int header_parse(char *buff, int len)
             break;
         }
 
-        parse_buff++;                       /*更新等待解析http*/
-        parse_num++;                        /*更新解析http字数*/
+        parse_pos++;       /* update parse position */
+        check++;
+        //解析到每一行末后进入
+        if (status == ONE_LF) {
+            *line_end = '\0';
 
-        if(status == ONE_LF)             /*请求方法或者请求头部*/
-        {
-              
+            
+
+            if (PARSE_HEAD_OPTION) {//解析http头选项，由key:value键值对组成
+                if (http_option_parse(header_line) == -1) {
+                    perror("解析http请求头部失败");
+                    return -1;
+                }
+            } else {//解析http头请求行
+                if (http_head_parse(buff) == -1){
+                    perror("解析http请求行失败");
+                    return -1;
+                }
+            }
+
+            header_line = check;               //记录http头选项每一行开始的位置
+        } else if (status == BODY_READ){
+            PARSE_HEAD_OPTION = 0;   //解析完请求头部之后置0，为下一个客户端做好准备。
+            printf("begin parse body!\n");
+            return 0;
         }
-        else if(status == BODY_READ)				  /*正文*/
-        {
-
-        }
-
-	}
+    } 
+    return 0;
 }
 
 /*----------------------解析http请求行----————---------------*/
 int http_head_parse(char *buff)
 {
-    int method;                   /*请求http方法，GET or POST*/
-    char *uri;
-    char version;
+    static char *SIMPLE_HTTP_VERSION = "HTTP/0.9";
+    int method;//用于获取http请求行的方法，GET或HEAD或POST
+    char request_uri[MAX_HEADER_LENGTH + 1]; // 用于获取客户端请求的uri
+    char *http_version = SIMPLE_HTTP_VERSION;//获取http版本，未分配内存，是静态变量，注意一下，可能会出错
 
-    char *parse_buff = buff;
-    char *parse_buff_stop;
-    int head_long = 0;
-    /*判断请求方法*/
-    if(!memcmp(parse_buff,"GET",3))
+    char *stop, *stop2;
+    char *logline = buff;
+    if (!memcmp(logline, "GET ", 4))
     {
         method = M_GET;
-        head_long = 3;
-        printf("GET\n");
+        printf("http method = GET\n");
     }
-    else if(!memcmp(parse_buff,"POST",4))
+    else if (!memcmp(logline, "HEAD ", 5))
+    {
+        /* head is just get w/no body */
+        method = M_HEAD;
+        printf("http method = HEAD\n");
+    }
+    else if (!memcmp(logline, "POST ", 5))
     {
         method = M_POST;
-        head_long = 4;
-        printf("POST\n");
+        printf("http method = POST\n");
     }
-    else
-    {
+    else {
+        //log_error_time();
+        //fprintf(stderr, "malformed request: \"%s\"\n", req->logline);
+        //send_r_not_implemented(req);
         perror("malformed request\n");
         return -1;
     }
-    PARSE_HEAD_OPTION = 1;
-    /*parse_buff移动到uri起始处;parse_buff_stop移动到uri结尾处*/
-    parse_buff = parse_buff + head_long;
-    while(*(++parse_buff) == ' ')
-    parse_buff_stop = parse_buff;    
-    while(*parse_buff_stop != '\0' && *parse_buff_stop != ' ')
-    {
-        ++parse_buff_stop;
+    PARSE_HEAD_OPTION = 1;//设置解析http头选项的标志位
+
+    /* Guaranteed to find ' ' since we matched a method above */
+    stop = logline + 3;
+    if (*stop != ' ')
+        ++stop;
+
+    /* scan to start of non-whitespace */
+    while (*(++stop) == ' ');
+
+    stop2 = stop;
+
+    /* scan to end of non-whitespace */
+    while (*stop2 != '\0' && *stop2 != ' ')
+        ++stop2;
+
+    if (stop2 - stop > MAX_HEADER_LENGTH) {
+        //log_error_time();
+        //fprintf(stderr, "URI too long %d: \"%s\"\n", MAX_HEADER_LENGTH,
+        //        req->logline);
+        //send_r_bad_request(req);
+        perror("URI too long");
+        return -1;
     }
-
-    memcpy(uri,parse_buff,parse_buff_stop - parse_buff);
-    printf("%s\n",uri);
-
-    /*解析http版本*/
-    if(*parse_buff_stop == ' ')
+    memcpy(request_uri, stop, stop2 - stop);
+    request_uri[stop2 - stop] = '\0';
+    printf("request uri = %s\n",request_uri);
+    if (*stop2 == ' ') 
     {
-        /*移动到http版本头部*/
-        ++parse_buff_stop;
-        while(*parse_buff_stop == '\0' && *parse_buff_stop == ' ')
+        /* if found, we should get an HTTP/x.x */
+        unsigned int p1, p2;
+
+        /* scan to end of whitespace */
+        ++stop2;
+        while (*stop2 == ' ' && *stop2 != '\0')
+            ++stop2;
+
+        /* scan in HTTP/major.minor */
+        if (sscanf(stop2, "HTTP/%u.%u", &p1, &p2) == 2) 
         {
-            ++parse_buff_stop;
-        }
-        int p1,p2;
-        if (sscanf(parse_buff_stop, "HTTP/%u.%u", &p1, &p2) == 2) 
-        {
+            /* HTTP/{0.9,1.0,1.1} */
             if (p1 == 1 && (p2 == 0 || p2 == 1)) 
             {
-                version = parse_buff_stop;
-                printf("%s\n",version);
-            } else if (p1 > 1 || (p1 != 0 && p2 > 1)) 
+                http_version = stop2;
+                printf("http version = %s\n",http_version);
+            } 
+            else if (p1 > 1 || (p1 != 0 && p2 > 1)) 
             {
-                perror("bad HTTP version");
-                return -1;
+                goto BAD_VERSION;
             }
+        } 
+        else {
+            goto BAD_VERSION;
         }
-        else
-        {
-            perror("bad HTTP version");
-            return -1;
-        }
-
     }
+
+    return 0;
+
+    BAD_VERSION:
+    //log_error_time();
+    //fprintf(stderr, "bogus HTTP version: \"%s\"\n", stop2);
+    //send_r_bad_request(req);
+    perror("bogus HTTP version");
+    return -1;
 }
 /*------------------格式化字符串为大写字母---------------------*/
 char *to_upper(char *str)
@@ -190,7 +238,7 @@ char *to_upper(char *str)
     char *buff = str;
     while (*str) {
         if (*str == '-')
-            *str = '-';
+            *str = '_';
         else
             *str = toupper(*str);
         str++;
@@ -203,47 +251,43 @@ int http_option_parse(char *buff)
     char *if_modified_since;    /* If-Modified-Since */
     char *content_type;
     char *content_length;
-    char *connection;
-    char *referer;
-    char *user_agent;
-    /*分离key值和value值*/
-    char *parse_buff = buff;
-    char *key,*value;
-    value = strchr(parse_buff,':');
-    memcpy(key, parse_buff, strlen(parse_buff)-strlen(value));
+    char *keepalive;
+    char *header_referer;
+    char *header_user_agent;
+
+    char c, *value, *line = buff;
+
+    value = strchr(line, ':');
     if (value == NULL)
-        return 0;
-    to_upper(key);
-    /*匹配key和value值*/
-    if (!memcmp(key, "IF_MODIFIED_SINCE", 17))
-    {
-        if_modified_since = value+1;
-        printf("%s:%s\n",key,if_modified_since);
+        return 0;//表示解析结束
+    *value++ = '\0';            /* overwrite the : */
+    to_upper(line);             /* header types are case-insensitive */
+    while ((c = *value) && (c == ' ' || c == '\t'))
+        value++;
+
+    if (!memcmp(line, "IF_MODIFIED_SINCE", 17)){
+        if_modified_since = value;
+        printf("IF_MODIFIED_SINCE:%s\n",if_modified_since);
     }
-    else if (!memcmp(key, "CONTENT_TYPE", 12))
-    {
-        content_type = value+1;
-        printf("%s:%s\n",key,content_type);
+    else if (!memcmp(line, "CONTENT_TYPE", 12)){
+        content_type = value;
+        printf("CONTENT_TYPE:%s\n",content_type);
     }
-    else if (!memcmp(key, "CONTENT_LENGTH", 14))
-    {
-        content_length = value+1;
-        printf("%s:%s\n",key,content_length);
+    else if (!memcmp(line, "CONTENT_LENGTH", 14)){
+        content_length = value;
+        printf("CONTENT_LENGTH:%s\n",content_length);
     }
-    else if (!memcmp(key, "CONNECTION", 10)) 
-    {         
-        connection = value+1;
-        printf("%s:%s\n",key,connection);
+    else if (!memcmp(line, "CONNECTION", 10) ) {         
+        keepalive = value;
+        printf("CONNECTION:%s\n",keepalive);
     }
-    else if (!memcmp(key, "REFERER", 7))
-    {
-        referer = value+1;
-        printf("%s:%s\n",key,referer);
+    else if (!memcmp(line, "REFERER", 7)) {
+        header_referer = value;
+        printf("REFERER:%s\n",header_referer);
     } 
-    else if (!memcmp(key, "USER_AGENT", 10))
-    {
-        user_agent = value+1;
-        printf("%s:%s\n",key,user_agent);
+    else if (!memcmp(line, "USER_AGENT", 10)) {
+        header_user_agent = value;
+        printf("USER_AGENT:%s\n",header_user_agent);
     }
     return 0;
 }
@@ -297,7 +341,8 @@ int process_requests(int server_s)
         else
             return -1;
     }
-    printf("recv from client:%s\n",buff);
+    printf("recv %d bytes from client:%s\n",bytes,buff);
+    header_parse(buff,bytes);
     return 0;
 }
 
