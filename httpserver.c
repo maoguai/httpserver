@@ -1,5 +1,5 @@
 //httpserver.c
-//q
+//
 /*--------------------------头文件--------------------------*/
 #include <sys/types.h>
 #include <sys/socket.h>
