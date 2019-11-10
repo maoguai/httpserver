@@ -82,6 +82,14 @@ char *to_upper(char *str)
 /*----------------------解析http请求头部----———---------------*/
 int http_option_parse(char *buff) 
 {
+
+    char *if_modified_since;    /* If-Modified-Since */
+    char *content_type;
+    char *content_length;
+    char *keepalive;
+    char *header_referer;
+    char *header_user_agent;
+
 	char *check = buff;
 	char key[64];
 	char *value;
@@ -90,9 +98,37 @@ int http_option_parse(char *buff)
 	if (value == NULL)
         return 0;//表示解析结束
     len_key = value - check;
+    *value++ = '\0';
+    while (*value == ' ' || *value == '\t')
+        value++;
     memcpy(key,check,len_key);
     key[len_key] = '\0';
-    printf("请求头部%s%s\n",to_upper(key),value);
+    memcpy(key,to_upper(key),len_key);
+    if (!memcmp(key, "IF_MODIFIED_SINCE", 17)){
+        if_modified_since = value;
+        printf("%s:%s\n",key,if_modified_since);
+    }
+    else if (!memcmp(key, "CONTENT_TYPE", 12)){
+        content_type = value;
+        printf("%s:%s\n",key,content_type);
+    }
+    else if (!memcmp(key, "CONTENT_LENGTH", 14)){
+        content_length = value;
+        printf("%s:%s\n",key,content_length);
+    }
+    else if (!memcmp(key, "CONNECTION", 10) ) {         
+        keepalive = value;
+        printf("%s:%s\n",key,keepalive);
+    }
+    else if (!memcmp(key, "REFERER", 7)) {
+        header_referer = value;
+        printf("%s:%s\n",key,header_referer);
+    } 
+    else if (!memcmp(key, "USER_AGENT", 10)) {
+        header_user_agent = value;
+        printf("%s:%s\n",key,header_user_agent);
+    }
+    return 0;
 }
 
 /*------------------------解析http请求行----------------------*/
