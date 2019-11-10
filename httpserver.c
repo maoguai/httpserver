@@ -11,6 +11,9 @@
 #include <netinet/in.h>
 #include <errno.h>
 //
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <sys/mman.h>
 /*-------------------------全局变量--------------------------*/
 #define PORT 6666
 #define BUFFER_SIZE 4096
@@ -19,7 +22,15 @@
 #define SOCKADDR sockaddr_in
 #define S_FAMILY sin_family
 #define SERVER_AF AF_INET
-#define MAX_HEADER_LENGTH           1024
+#define MAX_HEADER_LENGTH 1024
+#define MAXLINE  8192 
+
+
+int method;                //用于获取http请求行的方法，GET或HEAD或POST
+char request_uri[MAX_HEADER_LENGTH + 1];    // 用于获取客户端请求的uri
+char *http_version;               //获取http版本，未分配内存，是静态变量
+int fd;                                     /* socket */
+extern char **environ;                      
 int PARSE_HEAD_OPTION = 0;//解析http头选项的标志位，为1表示可以解析了
 fd_set block_read_fdset;
 int max_fd;
@@ -55,6 +66,141 @@ int header_parse(char *buff, int len);           /*解析http头*/
 int http_head_parse(char *buff);             /*解析http请求行*/
 int http_option_parse(char *buff);         /*解析http请求头部*/
 char *to_upper(char *str);                       /*字符串大写*/
+int body_read_parse();                         /*http请求处理*/
+void serve_static(int fd, char *filename, int filesize);
+                                               /*静态请求处理*/ 
+void *Mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset);
+void Munmap(void *start, size_t length);
+ssize_t rio_writen(int fd, void *usrbuf, size_t n); 
+void get_filetype(char *filename, char *filetype);
+void linux_error(char *msg);
+/*------------------------http请求处理-----------------------*/
+int body_read_parse()
+{
+    int is_static;
+    struct stat sbuf;
+    char buf[MAXLINE], uri[MAXLINE], version[MAXLINE];
+    char filename[MAXLINE], cgiargs[MAXLINE];
+    is_static = parse_uri(request_uri, filename, cgiargs);
+    if (method != M_GET) 
+    {
+        perror("没有这种响应");
+        //此处发送501响应
+        return;
+    }
+    if (stat(filename, &sbuf) < 0) 
+    {
+        perror("文件不存在");
+        return;
+    }
+    if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) 
+    {
+        perror("无法读取文件");
+        return;
+    }
+    serve_static(fd, filename, sbuf.st_size);
+
+}
+int parse_uri(char *uri, char *filename, char *cgiargs) 
+{
+    char *ptr;
+
+    if (!strstr(uri, "cgi-bin")) 
+    {  
+    strcpy(cgiargs, "");                             
+    strcpy(filename, ".");                           
+    strcat(filename, uri);                           
+    if (uri[strlen(uri)-1] == '/')                  
+        strcat(filename, "home.html");               
+    return 1;
+    }
+}
+/*------------------------http静态处理-----------------------*/
+void serve_static(int fd, char *filename, int filesize) 
+{
+    printf("this is serve_static\n");
+    int srcfd;
+    char *srcp, filetype[MAXLINE], buf[MAXLINE];
+
+    //发送响应头给客户端
+    get_filetype(filename, filetype);
+    sprintf(buf, "HTTP/1.0 200 OK\r\n");
+    sprintf(buf, "%sServer:httpserver\r\n", buf);
+    sprintf(buf, "%sContent-length: %d\r\n", buf, filesize);
+    sprintf(buf, "%sContent-type: %s\r\n\r\n", buf, filetype);
+
+    if (rio_writen(fd, buf, strlen(buf)) != strlen(buf))      
+        linux_error("rio_writen");
+
+    //发送响应体给客户端
+    if((srcfd = open(filename, O_RDONLY, 0)) < 0)
+        linux_error("open");
+    //将文件内容映射到虚拟内存中，提高文件的读写效率
+    srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0);
+    close(srcfd);   
+    //将请求的内容发送给浏览器
+    if (rio_writen(fd, srcp, filesize) != filesize)
+        linux_error("rio_writen");
+    //解除映射
+    Munmap(srcp, filesize); 
+    close(fd);
+}
+
+void get_filetype(char *filename, char *filetype) 
+{
+    if (strstr(filename, ".html"))
+    strcpy(filetype, "text/html");
+    else if (strstr(filename, ".gif"))
+    strcpy(filetype, "image/gif");
+    else if (strstr(filename, ".jpg"))
+    strcpy(filetype, "image/jpeg");
+    else
+    strcpy(filetype, "text/plain");
+}  
+
+ssize_t rio_writen(int fd, void *usrbuf, size_t n) 
+{
+    size_t nleft = n;
+    ssize_t nwritten;
+    char *bufp = usrbuf;
+
+    while (nleft > 0) {
+    if ((nwritten = write(fd, bufp, nleft)) <= 0) {
+        if (errno == EINTR)  /* interrupted by sig handler return */
+        nwritten = 0;    /* and call write() again */
+        else
+        return -1;       /* errno set by write() */
+    }
+    nleft -= nwritten;
+    bufp += nwritten;
+    }
+    return n;
+}
+//内存映射
+void *Mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset) 
+{
+    void *ptr;
+    if ((ptr = mmap(addr, len, prot, flags, fd, offset)) == ((void *) -1))
+    {
+        perror("mmap error");
+        exit(0);
+    }
+    return(ptr);
+}
+void Munmap(void *start, size_t length) 
+{
+    if (munmap(start, length) < 0)
+    {
+        perror("munmap error");
+        exit(0);
+    }
+}
+void linux_error(char *msg) /* linux style error */
+{
+    perror(msg);
+    exit(0);
+}
+
 /*------------------------解析http头-------------------------*/
 
 int header_parse(char *buff, int len)
@@ -64,13 +210,17 @@ int header_parse(char *buff, int len)
     char *line_end;//用于标记，改成指针
     char *header_line;//记录http头选项每一行开始的位置
     int parse_pos = 0;
-    while (check < (buff + len)) {
-        switch (status) {
+    while (check < (buff + len)) 
+    {
+        switch (status) 
+        {
         case READ_HEADER:
-            if (*check == '\r') {
+            if (*check == '\r') 
+            {
                 status = ONE_CR;
                 line_end = check;
-            } else if (*check == '\n') {
+            } else if (*check == '\n') 
+            {
                 status = ONE_LF;
                 line_end = check;
             }
@@ -84,8 +234,7 @@ int header_parse(char *buff, int len)
             break;
 
         case ONE_LF:
-            /* if here, we've found the end (for sure) of a header */
-            if (*check == '\r') /* could be end o headers */
+            if (*check == '\r')
                 status = TWO_CR;
             else if (*check == '\n')
                 status = BODY_READ;
@@ -104,30 +253,36 @@ int header_parse(char *buff, int len)
             break;
         }
 
-        parse_pos++;       /* update parse position */
+        parse_pos++;       
         check++;
         //解析到每一行末后进入
         if (status == ONE_LF) {
             *line_end = '\0';
-
-            
-
-            if (PARSE_HEAD_OPTION) {//解析http头选项，由key:value键值对组成
-                if (http_option_parse(header_line) == -1) {
+            if (PARSE_HEAD_OPTION) 
+            {
+                //解析http头选项，由key:value键值对组成
+                if (http_option_parse(header_line) == -1) 
+                {
                     perror("解析http请求头部失败");
                     return -1;
                 }
-            } else {//解析http头请求行
-                if (http_head_parse(buff) == -1){
+            } else 
+            {
+                //解析http头请求行
+                if (http_head_parse(buff) == -1)
+                {
                     perror("解析http请求行失败");
                     return -1;
                 }
             }
 
             header_line = check;               //记录http头选项每一行开始的位置
-        } else if (status == BODY_READ){
+        } 
+        else if (status == BODY_READ)
+        {
             PARSE_HEAD_OPTION = 0;   //解析完请求头部之后置0，为下一个客户端做好准备。
             printf("begin parse body!\n");
+            body_read_parse();
             return 0;
         }
     } 
@@ -138,10 +293,6 @@ int header_parse(char *buff, int len)
 int http_head_parse(char *buff)
 {
     static char *SIMPLE_HTTP_VERSION = "HTTP/0.9";
-    int method;//用于获取http请求行的方法，GET或HEAD或POST
-    char request_uri[MAX_HEADER_LENGTH + 1]; // 用于获取客户端请求的uri
-    char *http_version = SIMPLE_HTTP_VERSION;//获取http版本，未分配内存，是静态变量，注意一下，可能会出错
-
     char *stop, *stop2;
     char *logline = buff;
     if (!memcmp(logline, "GET ", 4))
