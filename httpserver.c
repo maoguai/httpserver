@@ -69,6 +69,7 @@ char *to_upper(char *str);                       /*字符串大写*/
 int body_read_parse();                         /*http请求处理*/
 void serve_static(int fd, char *filename, int filesize);
                                                /*静态请求处理*/ 
+void serve_dynamic(int fd, char *filename, char *cgiargs);
 void *Mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset);
 void Munmap(void *start, size_t length);
 ssize_t rio_writen(int fd, void *usrbuf, size_t n); 
@@ -82,25 +83,34 @@ int body_read_parse()
     char buf[MAXLINE], uri[MAXLINE], version[MAXLINE];
     char filename[MAXLINE], cgiargs[MAXLINE];
     is_static = parse_uri(request_uri, filename, cgiargs);
-    if (method != M_GET) 
+    if (method != M_GET && method != M_POST) 
     {
         perror("没有这种响应");
         //此处发送501响应
         return;
     }
-    if (stat(filename, &sbuf) < 0) 
-    {
-        perror("文件不存在");
-        return;
+
+    if (is_static) 
+    { //对静态请求处理    
+        if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) 
+        { 
+            perror("couldn't read the file");
+            return;
+        }
+        serve_static(fd, filename, sbuf.st_size);        
     }
-    if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) 
-    {
-        perror("无法读取文件");
-        return;
+    else 
+    { //对动态请求处理
+        if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)) 
+        { 
+            perror("couldn't run the CGI program");
+            return;
+        }
+        serve_dynamic(fd, filename, cgiargs);           
     }
-    serve_static(fd, filename, sbuf.st_size);
 
 }
+
 int parse_uri(char *uri, char *filename, char *cgiargs) 
 {
     char *ptr;
@@ -114,7 +124,56 @@ int parse_uri(char *uri, char *filename, char *cgiargs)
         strcat(filename, "home.html");               
     return 1;
     }
+    else 
+    {  /* Dynamic content */                        
+        ptr = index(uri, '?');                           
+        if (ptr) 
+        {
+            strcpy(cgiargs, ptr+1);
+            *ptr = '\0';
+        }
+        else 
+            strcpy(cgiargs, "");                         
+        strcpy(filename, ".");                           
+        strcat(filename, uri);                           
+        return 0;
+    }
 }
+
+void serve_dynamic(int fd, char *filename, char *cgiargs) 
+{
+    printf("this is serve_dynamic\n");
+    char buf[MAXLINE], *emptylist[] = { NULL };
+    // 发送响应头第一行 
+    sprintf(buf, "HTTP/1.1 200 OK\r\n"); 
+    if (rio_writen(fd, buf, strlen(buf)) != strlen(buf))
+        linux_error("rio_writen");
+    //发送响应头选项
+    sprintf(buf, "Server: Tiny Web Server\r\n");
+    if (rio_writen(fd, buf, strlen(buf)) != strlen(buf))
+        linux_error("rio_writen");
+
+    printf("filename=%s\n",filename);
+    //fork出子进程用于发送请求的数据
+    int pid = fork();
+    if (pid == 0)// 子进程
+    {
+        //setenv("QUERY_STRING", cgiargs, 1);
+        if( dup2(fd, STDOUT_FILENO) < 0)       //重定向标准输出到socket fd
+            linux_error("dup2");
+
+        if (execve(filename, emptylist, environ) < 0)//执行CGI可执行程序，新的程序将替代掉子进程
+            linux_error("Execve error");
+    }
+    else if (pid < 0)  //fork错误
+        linux_error("fork");
+    else //父进程
+    {
+        if (wait(NULL) < 0) //父进程等待子进程执行完成  
+            linux_error("wait"); 
+    }
+}
+
 /*------------------------http静态处理-----------------------*/
 void serve_static(int fd, char *filename, int filesize) 
 {
