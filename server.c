@@ -54,7 +54,13 @@ int max_fd;
 #define M_DELETE    5
 #define M_LINK      6
 #define M_UNLINK    7
-
+/*------------------------ http请求头部参数----------------*/
+char *if_modified_since;    /* If-Modified-Since */
+char *content_type;
+char *content_length;
+char *keepalive;
+char *header_referer;
+char *header_user_agent;
 /*-------------------------函数申明--------------------------*/
 void select_loop(int server_s);               /*处理客户端请求*/
 int process_requests(int server_s);                /*报文解析*/
@@ -63,9 +69,309 @@ int header_parse(char *buff, int len);           /*解析http头*/
 int http_head_parse(char *buff);             /*解析http请求行*/
 int http_option_parse(char *buff);         /*解析http请求头部*/
 char *to_upper(char *str);                       /*字符串大写*/
-int body_read_parse();                         /*http请求处理*/
+int body_read_parse(char *buff);               /*http请求处理*/
 void serve_static(int fd, char *filename, int filesize);
                                                /*静态请求处理*/
+int parse_uri(char *uri, char *filename, char *cgiargs);
+void serve_dynamic(int fd, char *filename, char *cgiargs);
+                                               /*动态请求处理*/
+void *Mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset);
+                                                  /*内存映射*/
+void Munmap(void *start, size_t length);          /*内存释放*/
+ssize_t rio_writen(int fd, void *usrbuf, size_t n);/*文件发送*/ 
+ssize_t rio_readn(int fd, void *usrbuf, size_t n);/*文件读取*/ 
+void get_filetype(char *filename, char *filetype);/*文件类型*/
+void linux_error(char *msg);                      /*错误警告*/
+void serve_post(char *post_buff, char *filename, char *cgiargs);
+                                                  /*post请求*/
+/*-------------------------post请求-------------------------*/                                                  
+void serve_post(char *post_buff, char *filename, char *cgiargs) 
+{
+    printf("this is serve_post\n");
+
+    int pipes[2] ,post_data_fd ,reda_num;
+    char buf[MAXLINE], *emptylist[] = { NULL };
+    printf("1\n");
+
+    // Return first part of HTTP response 
+    sprintf(buf, "HTTP/1.1 200 OK\r\n"); 
+    if (rio_writen(fd, buf, strlen(buf)) != strlen(buf))
+        linux_error("rio_writen");
+
+    sprintf(buf, "Server: Tiny Web Server\r\n");
+    if (rio_writen(fd, buf, strlen(buf)) != strlen(buf))
+        linux_error("rio_writen");
+
+    char template[] = "post-temp.XXXXXX";
+    post_data_fd = mkstemp(template);//创建临时文件，用于存放post请求的body数据
+    if (post_data_fd == -1) {
+        linux_error("mkstemp");
+    }
+    int len = atoi(content_length);//从头部解析出的post请求数据长度
+    if(len <= 0)
+        linux_error("content_length");
+    char len_buf[32] = {0};
+    sprintf(len_buf, "CONTENT_LENGTH=%d",len);
+    putenv(len_buf);//设置环境变量，方便cgi程序获取
+    printf("content_length len = %d\n",len);
+    //把post请求数据写入boa-temp.XXXXXX临时文件
+    if (rio_writen(post_data_fd, post_buff, len) != len)
+        linux_error("rio_writen");
+
+    if (pipe(pipes) == -1) {//创建管道
+        linux_error("pipe");
+    }
+    int pid = fork();
+    if (pid == 0)// child
+    {
+        //把子进程的标准输出重定向到写管道，也就是CGI向终端输出的数据会写进管道，然后父进程读取管道的数据，最后最发送给客户端。
+        if (dup2(pipes[1], STDOUT_FILENO) == -1) {
+            close(pipes[1]);
+            linux_error("dup2");
+        }
+        close(pipes[1]);//此时，pipes[1]和STDOUT_FILENO同时指向同一个地方，pipes[1]没用就关掉。
+
+        lseek(post_data_fd, SEEK_SET, 0);
+        dup2(post_data_fd, STDIN_FILENO);//将标准输入重定向到post_data_fd，也就是说post_data_fd指向的文件内容会作为标准输入
+        close(post_data_fd);
+
+        if (execve(filename, emptylist, environ) < 0)
+            linux_error("Execve error");
+    }
+    else if (pid < 0)  //fork错误
+    {
+        close(pipes[0]);
+        close(pipes[1]);
+        linux_error("fork");
+    }
+    else //父进程
+    {
+        //读pipes[0] 管道的内容到buff中，这里可能还要对读取的cgi进行解析，然后发送给远端fd,明天调试
+        close(post_data_fd); 
+        post_data_fd = 0;
+        close(pipes[1]);
+        while ((reda_num = rio_readn(pipes[0], buf, 1024) )> 0) //从读管道读取cgi脚本的终端打印到buf中
+        {
+            if (rio_writen(fd, buf, reda_num) != reda_num)
+                linux_error("rio_writen");
+        }
+    }
+}
+/*-------------------------错误警告-------------------------*/
+void linux_error(char *msg) /* linux style error */
+{
+    perror(msg);
+    exit(0);
+}
+/*-------------------------内存映射-------------------------*/
+void *Mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset) 
+{
+    void *ptr;
+    if ((ptr = mmap(addr, len, prot, flags, fd, offset)) == ((void *) -1))
+    {
+        perror("mmap error");
+        exit(0);
+    }
+    return(ptr);
+}
+/*-------------------------内存释放-------------------------*/
+void Munmap(void *start, size_t length) 
+{
+    if (munmap(start, length) < 0)
+    {
+        perror("munmap error");
+        exit(0);
+    }
+}
+/*-------------------------文件读取-------------------------*/
+ssize_t rio_readn(int fd, void *usrbuf, size_t n) 
+{
+    size_t nleft = n; //剩下未读字符数
+    ssize_t nread;
+    char *bufp = usrbuf;
+
+    while (nleft > 0) {
+    if ((nread = read(fd, bufp, nleft)) < 0) {
+        if (errno == EINTR)  //被信号处理函数中断
+        nread = 0;      //本次读到0个字符，再次读取
+        else
+        return -1;      //出错，errno由read设置
+    } 
+    else if (nread == 0) //读取到EOF
+        break;              
+    nleft -= nread; //剩下的字符数减去本次读到的字符数
+    bufp += nread;  //缓冲区指针向右移动
+    }
+    //返回实际读取的字符数
+    return (n - nleft);         /* return >= 0 */
+}
+/*-------------------------文件发送-------------------------*/
+ssize_t rio_writen(int fd, void *usrbuf, size_t n) 
+{
+    size_t nleft = n;
+    ssize_t nwritten;
+    char *bufp = usrbuf;
+
+    while (nleft > 0) {
+    if ((nwritten = write(fd, bufp, nleft)) <= 0) {
+        if (errno == EINTR)  /* interrupted by sig handler return */
+        nwritten = 0;    /* and call write() again */
+        else
+        return -1;       /* errno set by write() */
+    }
+    nleft -= nwritten;
+    bufp += nwritten;
+    }
+    return n;
+}
+/*-------------------------文件类型-------------------------*/
+void get_filetype(char *filename, char *filetype) 
+{
+    if (strstr(filename, ".html"))
+    strcpy(filetype, "text/html");
+    else if (strstr(filename, ".gif"))
+    strcpy(filetype, "image/gif");
+    else if (strstr(filename, ".jpg"))
+    strcpy(filetype, "image/jpeg");
+    else
+    strcpy(filetype, "text/plain");
+}  
+/*-------------------------动态处理-------------------------*/
+void serve_dynamic(int fd, char *filename, char *cgiargs) 
+{
+    printf("this is serve_dynamic\n");
+    char buf[MAXLINE], *emptylist[] = { NULL };
+    // 发送响应头第一行 
+    sprintf(buf, "HTTP/1.1 200 OK\r\n"); 
+    if (rio_writen(fd, buf, strlen(buf)) != strlen(buf))
+        linux_error("rio_writen");
+    //发送响应头选项
+    sprintf(buf, "Server: Tiny Web Server\r\n");
+    if (rio_writen(fd, buf, strlen(buf)) != strlen(buf))
+        linux_error("rio_writen");
+
+    printf("filename=%s\n",filename);
+    //fork出子进程用于发送请求的数据
+    int pid = fork();
+    if (pid == 0)// 子进程
+    {
+        //setenv("QUERY_STRING", cgiargs, 1);
+        if( dup2(fd, STDOUT_FILENO) < 0)       //重定向标准输出到socket fd
+            linux_error("dup2");
+
+        if (execve(filename, emptylist, environ) < 0)//执行CGI可执行程序，新的程序将替代掉子进程
+            linux_error("Execve error");
+    }
+    else if (pid < 0)  //fork错误
+        linux_error("fork");
+    else //父进程
+    {
+        if (wait(NULL) < 0) //父进程等待子进程执行完成  
+            linux_error("wait"); 
+    }
+}
+/*-------------------------静态处理-------------------------*/
+void serve_static(int fd, char *filename, int filesize) 
+{
+    printf("静态处理\n");
+    int srcfd;
+    char *srcp, filetype[MAXLINE], buf[MAXLINE];
+
+    //发送响应头给客户端
+    get_filetype(filename, filetype);
+    sprintf(buf, "HTTP/1.0 200 OK\r\n");
+    sprintf(buf, "%sServer: Tiny Web Server\r\n", buf);
+    sprintf(buf, "%sContent-length: %d\r\n", buf, filesize);
+    sprintf(buf, "%sContent-type: %s\r\n\r\n", buf, filetype);
+
+    if (rio_writen(fd, buf, strlen(buf)) != strlen(buf))      
+        linux_error("rio_writen");
+
+    //发送响应体给客户端
+    if((srcfd = open(filename, O_RDONLY, 0)) < 0)
+        linux_error("open");
+    //将文件内容映射到虚拟内存中，提高文件的读写效率
+    srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0);
+    close(srcfd);   
+    //将请求的内容发送给浏览器
+    if (rio_writen(fd, srcp, filesize) != filesize)
+        linux_error("rio_writen");
+    //解除映射
+    Munmap(srcp, filesize); 
+    close(fd);
+}
+/*-------------------------uri解析----------------------------*/
+int parse_uri(char *uri, char *filename, char *cgiargs) 
+{
+    char *ptr;
+
+    if (!strstr(uri, "cgi-bin")) 
+    {  
+        strcpy(cgiargs, "");                             
+        strcpy(filename, ".");                           
+        strcat(filename, uri);                          
+        if (uri[strlen(uri)-1] == '/')           
+            strcat(filename, "home.html");              
+        return 1;
+    }
+    else 
+    {               
+        ptr = index(uri, '?');                         
+        if (ptr) 
+        {
+            strcpy(cgiargs, ptr+1);
+            *ptr = '\0';
+        }
+        else 
+            strcpy(cgiargs, "");                        
+        strcpy(filename, ".");                           
+        strcat(filename, uri);                          
+        return 0;
+    }
+}
+/*-------------------------http请求处理----------------------*/
+int body_read_parse(char *buff)
+{
+    int is_static;
+    struct stat sbuf;
+    char buf[MAXLINE], uri[MAXLINE], version[MAXLINE];
+    char filename[MAXLINE], cgiargs[MAXLINE];
+    if (method != M_GET && method != M_POST) 
+    {
+        perror("does not implement this method");
+        //501响应
+        return;
+    }
+    is_static = parse_uri(request_uri, filename, cgiargs); 
+    if (stat(filename, &sbuf) < 0) 
+    {
+        perror("couldn't find this file");
+        return;
+    }                                                    
+    if (method == M_POST) {
+        serve_post(buff, filename, cgiargs);
+        return(0);
+    }
+    if (is_static) 
+    { //对静态请求处理    
+        if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) 
+        { 
+            perror("couldn't read the file");
+            return;
+        }
+        serve_static(fd, filename, sbuf.st_size);        
+    }
+    else 
+    { //对动态请求处理
+        if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)) 
+        { 
+            perror("couldn't run the CGI program");
+            return;
+        }
+        serve_dynamic(fd, filename, cgiargs);           
+    }
+    return 0;
+}
 /*------------------格式化字符串为大写字母---------------------*/
 char *to_upper(char *str)
 {
@@ -82,14 +388,6 @@ char *to_upper(char *str)
 /*----------------------解析http请求头部----———---------------*/
 int http_option_parse(char *buff) 
 {
-
-    char *if_modified_since;    /* If-Modified-Since */
-    char *content_type;
-    char *content_length;
-    char *keepalive;
-    char *header_referer;
-    char *header_user_agent;
-
 	char *check = buff;
 	char key[64];
 	char *value;
@@ -270,7 +568,7 @@ int header_parse(char *buff, int len)
 		{
 			PARSE_HEAD_OPTION = 0;   //解析完请求头部之后置0，为下一个客户端做好准备。
             printf("解析请求数据!\n");
-            //body_read_parse();
+            body_read_parse(check);
             return 0;
 		}
 
