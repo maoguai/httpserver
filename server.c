@@ -55,12 +55,13 @@ int max_fd;
 #define M_LINK      6
 #define M_UNLINK    7
 /*------------------------ http请求头部参数----------------*/
-char *if_modified_since;    /* If-Modified-Since */
+char *if_modified_since;            /* If-Modified-Since */
 char *content_type;
 char *content_length;
 char *keepalive;
 char *header_referer;
 char *header_user_agent;
+char *transfer_encoding;                           /*chunked*/
 /*-------------------------函数申明--------------------------*/
 void select_loop(int server_s);               /*处理客户端请求*/
 int process_requests(int server_s);                /*报文解析*/
@@ -84,6 +85,97 @@ void get_filetype(char *filename, char *filetype);/*文件类型*/
 void linux_error(char *msg);                      /*错误警告*/
 void serve_post(char *post_buff, char *filename, char *cgiargs);
                                                   /*post请求*/
+int de_chunked(unsigned char *data,int data_length,unsigned char *dest,int *dest_length);
+                                          /*对chunked信息合块*/
+int _find_key(unsigned char *data,int data_length,unsigned char *key,int key_length,int *position);
+                             /*查找关键数据串在长数据中出现的位置*/
+int htoi(unsigned char *s);                 /*进制转换十六转十*/
+/*------------------------进制转换十六转十--------------------*/                                                  
+int htoi(unsigned char *s) 
+{ 
+    int i; 
+    int n = 0; 
+    if (s[0] == '0' && (s[1]=='x' || s[1]=='X')) //判断是否有前导0x或者0X
+    { 
+        i = 2; 
+    } 
+    else 
+    { 
+        i = 0; 
+    } 
+    for (; (s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'z') || (s[i] >='A' && s[i] <= 'Z');++i) 
+    {   
+        if (tolower(s[i]) > '9') 
+        { 
+            n = 16 * n + (10 + tolower(s[i]) - 'a'); 
+        } 
+        else 
+        { 
+            n = 16 * n + (tolower(s[i]) - '0'); 
+        } 
+    } 
+    return n; 
+} 
+/*----------------查找关键数据串在长数据中出现的位置-------------*/                               
+int _find_key(unsigned char *data,int data_length,unsigned char *key,int key_length,int *position)
+{
+    int i = *position;
+    if(key == NULL || i<0)
+    {
+        return 0;
+    }
+    for(; i <= data_length-key_length; i++)
+    {
+        if( memcmp(data+i, key, key_length) == 0 )
+        {
+            *position = i;
+            return 1;
+        }
+    }
+    return 0;
+}
+/*----------------------对chunked信息合块--------------------*/                                                  
+int de_chunked(unsigned char *data,int data_length,unsigned char *dest,int *dest_length)
+{
+    char    chunked_hex[CHUNKED_MAX_LEN + 1];    // 十六进制的块长度
+    int        chunked_len;                        // 块长度
+    int        ret;
+    int        begin = 0;
+    int        end = 0;
+    int        i = 0;
+    int        index = 0;
+    ret = _find_key(data,data_length,"0\r\n\r\n",5,&end);
+    if (ret == 0)    //信息不完整
+        return 0;
+
+    ret = _find_key(data,data_length,"\r\n\r\n",4,&begin);
+    begin = begin + 4;    //移动到数据起点
+
+    while(memcmp(data+begin,"0\r\n\r\n",5) != 0)
+    {
+        //获得当前块长度
+        ret = _find_key(data+begin,CHUNKED_MAX_LEN,"\r\n",2,&i);
+        if (ret == 0)    //信息不完整
+            return 0;
+        memcpy(chunked_hex,data+begin,i);
+        chunked_hex[i] = '\0';
+        chunked_len = htoi(chunked_hex);
+        //移动到当前块数据段
+        begin = begin + i + 2;
+        //获得当前块数据
+        if (memcmp(data+begin+chunked_len,"\r\n",2) != 0)
+            return 0;    //信息有误
+        memcpy(dest+index,data+begin,chunked_len);
+        index = index + chunked_len;
+        //移动到下一块块长度
+        begin = begin + chunked_len + 2;
+        i = begin;
+        if(begin > end)    //结构错误
+            return -1;
+    }
+    *dest_length = index;
+    return 1;
+}
 /*-------------------------post请求-------------------------*/                                                  
 void serve_post(char *post_buff, char *filename, char *cgiargs) 
 {
