@@ -62,6 +62,8 @@ char *keepalive;
 char *header_referer;
 char *header_user_agent;
 char *transfer_encoding;                           /*chunked*/
+/*------------------------https ssl---------------------*/
+
 /*-------------------------函数申明--------------------------*/
 void select_loop(int server_s);               /*处理客户端请求*/
 int process_requests(int server_s);                /*报文解析*/
@@ -90,6 +92,10 @@ int de_chunked(unsigned char *data,int data_length,unsigned char *dest,int *dest
 int _find_key(unsigned char *data,int data_length,unsigned char *key,int key_length,int *position);
                              /*查找关键数据串在长数据中出现的位置*/
 int htoi(unsigned char *s);                 /*进制转换十六转十*/
+
+
+
+
 /*------------------------进制转换十六转十--------------------*/                                                  
 int htoi(unsigned char *s) 
 { 
