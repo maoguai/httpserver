@@ -13,7 +13,7 @@ gcc -o https_server https_server.c -levent -lssl -lcrypto -levent_openssl -lm -l
 
   ## curl
 
-上传：curl -k https://172.16.176.14:8081/post?file=s.jpg -F "file=@/Users/maoguai/Desktop/s.jpg" -#
+上传：curl -k https://172.16.176.14:8081/post?file=a.txt -F "file=@/home/dzh/a.txt" -#
 
 下载：curl -k http://172.16.176.14.:8081/get?file=IMG_0782.jpg -# -o s.jpg
 
