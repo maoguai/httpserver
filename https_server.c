@@ -4,6 +4,7 @@
 #include <evhttp.h>
 #include <event.h>
 #include <string.h>
+
 #include "event2/http.h"
 #include "event2/event.h"
 #include "event2/buffer.h"
@@ -15,12 +16,14 @@
 #include "event2/util.h"
 #include "event2/listener.h"
 #include <event2/keyvalq_struct.h>
+
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
+
 #include <unistd.h>
 #include <netinet/in.h>
 #include <signal.h>
@@ -30,6 +33,7 @@
 
 #define BUF_MAX 1024*16
 #define MYHTTPD_SIGNATURE   "httpserver v 0.0.1"
+char *find_http_header(struct evhttp_request *req,struct evkeyvalq *params,const char *query_char);
 //解析post请求数据
 void get_post_message(char *buf, struct evhttp_request *req)
 {
@@ -52,6 +56,9 @@ void get_post_message(char *buf, struct evhttp_request *req)
 	}
 }
 
+
+//识别/r/n开头
+//识别--------结尾
 //处理post请求
 void http_handler_testpost_msg(struct evhttp_request *req,void *arg)
 {
@@ -60,20 +67,89 @@ void http_handler_testpost_msg(struct evhttp_request *req,void *arg)
 		printf("====line:%d,%s\n",__LINE__,"input param req is null.");
 		return;
 	}
-	
-	char buf[BUF_MAX] = {0};
-	get_post_message(buf, req);//获取请求数据，一般是json格式的数据
-	if(buf == NULL)
+	if (evhttp_request_get_command (req) != EVHTTP_REQ_POST)
 	{
-		printf("====line:%d,%s\n",__LINE__,"get_post_message return null.");
 		return;
 	}
-	else
-	{
-		//可以使用json库解析需要的数据
-		printf("====line:%d,request data:%s",__LINE__,buf);
-	}
-	
+    printf("====line:%d,%s\n",__LINE__,"post");
+	char *file = NULL;
+ 	char filetype[1024];
+ 	struct evkeyvalq file_params = {0};
+ 	file = find_http_header(req,&file_params,"file");//获取get请求uri中的file参数
+	//get_post_message(buf, req);//获取请求数据，一般是json格式的数据
+    printf("====line:%d,get request param: file=[%s]\n",__LINE__,file);
+	get_filetype(file, filetype);
+	/* Decode the payload */
+    struct evbuffer *buf = evhttp_request_get_input_buffer (req);
+    evbuffer_enable_locking(buf, NULL);
+    evbuffer_add (buf, "", 1);    /* NUL-terminate the buffer */
+    char *payload = (char *) evbuffer_pullup (buf, -1);
+    int post_data_len = evbuffer_get_length(buf);
+	printf("file:-%s-%d\n", file, post_data_len);
+    char request_data_buf[BUF_MAX] = {0};
+    post_data_len = 3000;
+    memcpy(request_data_buf, payload, post_data_len);
+    printf("%s\n", request_data_buf);
+    
+    struct evbuffer *removebuf = evbuffer_new();
+    size_t len = evbuffer_get_length(buf);
+    char * line = evbuffer_readln( buf , &len , EVBUFFER_EOL_CRLF_STRICT);
+    
+    //--------------
+    if ( line != NULL) {
+        printf("===evbuffer_readln(--------------): line[%s] len[%d]===\n" , line , len);
+        free(line);
+    }
+    //Content-Disposition
+    line = evbuffer_readln( buf , &len , EVBUFFER_EOL_CRLF_STRICT);
+    if ( line != NULL) {
+        printf("===evbuffer_readln(Content-Disposition): line[%s] len[%d]===\n" , line , len);
+        free(line);
+    }
+    //Content-Type
+    line = evbuffer_readln( buf , &len , EVBUFFER_EOL_CRLF_STRICT);
+    if ( line != NULL) {
+        printf("===evbuffer_readln(Content-Type): line[%s] len[%d]===\n" , line , len);
+        free(line);
+    }
+    //\r\n
+    line = evbuffer_readln( buf , &len , EVBUFFER_EOL_CRLF_STRICT);
+    if ( line != NULL) {
+        printf("===evbuffer_readln(\r\n): line[%s] len[%d]===\n" , line , len);
+        free(line);
+    }
+    
+    //file
+    line = evbuffer_readln( buf , &len , EVBUFFER_EOL_CRLF_STRICT);
+    if ( line != NULL) {
+        printf("===evbuffer_readln(file): line[] len[%d]===\n"  , len);
+        FILE *fp = NULL;
+        fp = fopen(file, "wb");   //以二进制写入,创建文件
+        if (fp == NULL)
+        {
+            printf("file not found \n");
+            fclose(fp);
+            return ;
+        }
+        char result[BUF_MAX] = {0};
+        memcpy(result, line, len);
+        fputs(result, fp);
+        fclose(fp);
+        free(line);
+    }
+    /*
+    FILE *fp = NULL;
+    fp = fopen(file, "wb");   //以二进制写入,创建文件
+    if (fp == NULL)
+    {
+       printf("file not found \n");
+       fclose(fp);
+       return ;
+    }
+    fputs(line, fp);
+    fclose(fp);
+    free(line);
+    */
 	//回响应
 	struct evbuffer *retbuff = NULL;
 	retbuff = evbuffer_new();
@@ -82,7 +158,7 @@ void http_handler_testpost_msg(struct evhttp_request *req,void *arg)
 		printf("====line:%d,%s\n",__LINE__,"retbuff is null.");
 		return;
 	}
-	evbuffer_add_printf(retbuff,"Receive post request,Thamks for the request!");
+	evbuffer_add_printf(retbuff,"Receive post file");
 	evhttp_send_reply(req,HTTP_OK,"Client",retbuff);
 	evbuffer_free(retbuff);
 }
@@ -109,7 +185,7 @@ char *find_http_header(struct evhttp_request *req,struct evkeyvalq *params,const
 	}
 	else
 	{
-		printf("====line:%d,Got a GET request for <%s>\n",__LINE__,uri);
+		printf("====line:%d,Got a request for <%s>\n",__LINE__,uri);
 	}
 	
 	//解码uri
@@ -180,7 +256,7 @@ void Munmap(void *start, size_t length)
     }
 }
 
-//处理get请求
+//处理请求
 void http_handler_testget_msg(struct evhttp_request *req,void *arg)
 {
 	if(req == NULL)
@@ -188,53 +264,56 @@ void http_handler_testget_msg(struct evhttp_request *req,void *arg)
 		printf("====line:%d,%s\n",__LINE__,"input param req is null.");
 		return;
 	}
-	int srcfd;
-	struct stat sbuf;
-	char *file = NULL;
-	char *srcp,filetype[1024];
-	struct evkeyvalq file_params = {0};
-	file = find_http_header(req,&file_params,"file");//获取get请求uri中的file参数
-	if(file == NULL)
-	{
-		printf("====line:%d,%s\n",__LINE__,"request uri no param file.");
-	}
-	else
-	{
-		printf("====line:%d,get request param: file=[%s]\n",__LINE__,file);
-	}
-
-	if (stat(file, &sbuf) < 0) 
+	if (evhttp_request_get_command (req) == EVHTTP_REQ_GET)
     {
-        printf("couldn't find this file");
-        return;
-    }
-    get_filetype(file, filetype);
-	printf("文件处理\n");
-	if((srcfd = open(file, O_RDONLY, 0)) < 0)
-        printf("open file error");
-    //将文件内容映射到虚拟内存中，提高文件的读写效率
-    srcp = Mmap(0, sbuf.st_size, PROT_READ, MAP_PRIVATE, srcfd, 0);
-    close(srcfd);   
-	//回响应
-	struct evbuffer *retbuff = NULL;
-	retbuff = evbuffer_new();
-	if(retbuff == NULL)
-	{
-		printf("====line:%d,%s\n",__LINE__,"retbuff is null.");
-		return;
+ 		int srcfd;
+ 		struct stat sbuf;
+ 		char *file = NULL;
+ 		char *srcp,filetype[1024];
+ 		struct evkeyvalq file_params = {0};
+ 		file = find_http_header(req,&file_params,"file");//获取get请求uri中的file参数
+ 		if(file == NULL)
+ 		{
+ 			printf("====line:%d,%s\n",__LINE__,"request uri no param file.");
+ 		}
+ 		else
+ 		{
+ 			printf("====line:%d,get request param: file=[%s]\n",__LINE__,file);
+ 		}
+
+ 		if (stat(file, &sbuf) < 0) 
+  		 {
+  		     printf("couldn't find this file");
+  		     return;
+  		 }
+  		get_filetype(file, filetype);
+ 		printf("文件处理\n");
+ 		if((srcfd = open(file, O_RDONLY, 0)) < 0)
+  		     printf("open file error");
+  		 //将文件内容映射到虚拟内存中，提高文件的读写效率
+  		 srcp = Mmap(0, sbuf.st_size, PROT_READ, MAP_PRIVATE, srcfd, 0);
+  		 close(srcfd);   
+ 		//回响应
+ 		struct evbuffer *retbuff = NULL;
+ 		retbuff = evbuffer_new();
+ 		if(retbuff == NULL)
+ 		{
+ 			printf("====line:%d,%s\n",__LINE__,"retbuff is null.");
+ 			return;
+ 		}
+ 		evhttp_add_header(req->output_headers, "Server", MYHTTPD_SIGNATURE);
+  		 evhttp_add_header(req->output_headers, "Content-Type", filetype);
+  		 //evhttp_add_header(req->output_headers, "Connection", "close");
+ 		evbuffer_add(retbuff,srcp,sbuf.st_size);
+ 		//常规
+ 		//evhttp_send_reply(req,HTTP_OK,"Client",retbuff);
+ 		//chunk发送
+ 		evhttp_send_reply_start(req,HTTP_OK, "Client");
+ 		evhttp_send_reply_chunk (req,retbuff);
+ 		evhttp_send_reply_end (req);
+ 		Munmap(srcp, sbuf.st_size);
+ 		evbuffer_free(retbuff);
 	}
-	evhttp_add_header(req->output_headers, "Server", MYHTTPD_SIGNATURE);
-    evhttp_add_header(req->output_headers, "Content-Type", filetype);
-    //evhttp_add_header(req->output_headers, "Connection", "close");
-	evbuffer_add(retbuff,srcp,sbuf.st_size);
-	//常规
-	//evhttp_send_reply(req,HTTP_OK,"Client",retbuff);
-	//chunk发送
-	evhttp_send_reply_start(req,HTTP_OK, "Client");
-	evhttp_send_reply_chunk (req,retbuff);
-	evhttp_send_reply_end (req);
-	Munmap(srcp, sbuf.st_size);
-	evbuffer_free(retbuff);
 }
 static void server_setup_certs (SSL_CTX *ctx,
         const char *certificate_chain,
