@@ -81,17 +81,18 @@ void http_handler_testpost_msg(struct evhttp_request *req,void *arg)
 	get_filetype(file, filetype);
 	/* Decode the payload */
     struct evbuffer *buf = evhttp_request_get_input_buffer (req);
-    evbuffer_enable_locking(buf, NULL);
+    evbuffer_enable_locking(buf,NULL);
+    evbuffer_lock(buf);
     evbuffer_add (buf, "", 1);    /* NUL-terminate the buffer */
     char *payload = (char *) evbuffer_pullup (buf, -1);
     int post_data_len = evbuffer_get_length(buf);
 	printf("file:-%s-%d\n", file, post_data_len);
+    /*
     char request_data_buf[BUF_MAX] = {0};
-    post_data_len = 3000;
     memcpy(request_data_buf, payload, post_data_len);
     printf("%s\n", request_data_buf);
-    
     struct evbuffer *removebuf = evbuffer_new();
+    */
     size_t len = evbuffer_get_length(buf);
     char * line = evbuffer_readln( buf , &len , EVBUFFER_EOL_CRLF_STRICT);
     
@@ -121,8 +122,9 @@ void http_handler_testpost_msg(struct evhttp_request *req,void *arg)
     
     //file
     line = evbuffer_readln( buf , &len , EVBUFFER_EOL_CRLF_STRICT);
-    if ( line != NULL) {
-        printf("===evbuffer_readln(file): line[] len[%d]===\n"  , len);
+    if ( line != NULL) 
+    {
+        printf("===evbuffer_readln(file): line[] len[%d]===\n", len);
         FILE *fp = NULL;
         fp = fopen(file, "wb");   //以二进制写入,创建文件
         if (fp == NULL)
@@ -132,24 +134,20 @@ void http_handler_testpost_msg(struct evhttp_request *req,void *arg)
             return ;
         }
         char result[BUF_MAX] = {0};
-        memcpy(result, line, len);
-        fputs(result, fp);
+        memcpy(result, line, len); 
+        if(strcmp(filetype,"text/plain")==0)
+        {
+            fputs(result,fp);
+        }
+        else //if(strcmp(filetype,"image/jpeg")==0)
+        {
+            fwrite(result, sizeof(unsigned char), len, fp);
+        }
         fclose(fp);
         free(line);
     }
-    /*
-    FILE *fp = NULL;
-    fp = fopen(file, "wb");   //以二进制写入,创建文件
-    if (fp == NULL)
-    {
-       printf("file not found \n");
-       fclose(fp);
-       return ;
-    }
-    fputs(line, fp);
-    fclose(fp);
-    free(line);
-    */
+    evbuffer_unlock(buf);
+    //evbuffer_free(buf);
 	//回响应
 	struct evbuffer *retbuff = NULL;
 	retbuff = evbuffer_new();
@@ -231,6 +229,8 @@ void get_filetype(char *filename, char *filetype)
     strcpy(filetype, "image/gif");
     else if (strstr(filename, ".jpg"))
     strcpy(filetype, "image/jpeg");
+    else if (strstr(filename, ".png"))
+    strcpy(filetype, "image/jpeg");
     else
     strcpy(filetype, "text/plain");
 }
@@ -256,7 +256,7 @@ void Munmap(void *start, size_t length)
     }
 }
 
-//处理请求
+//处理get请求
 void http_handler_testget_msg(struct evhttp_request *req,void *arg)
 {
 	if(req == NULL)
